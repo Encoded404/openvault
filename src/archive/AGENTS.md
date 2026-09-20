@@ -8,6 +8,6 @@ Archives are narrator/world reference material. Witness and visibility metadata 
 - Persist prepared replacement state before hiding sources. Validate source revisions, coverage and content integrity at sealing and recovery. A failed save or validation leaves sources visible or restores them; capture chat identity and cancellation before asynchronous work.
 - Sealed content is immutable. New history appends a segment; corrections append an explicit correction or require an explicit rebuild. Retrieval reads a persisted bounded projection rather than regenerating it from current POV, query or dynamic token demand.
 - Projection checkpoints are sealing, recovery, explicit settings changes and rebuild. Five-star entries are protected, temporal buckets retain representation, and low-priority coverage drops first. If protected content cannot fit, expose overflow/rollup requirements and keep new source history visible.
-- Respect frozen replies and complete-turn boundaries. Use high-water/target hysteresis rather than a per-turn sliding cut. Recover interrupted prepared records idempotently before another compaction.
+- Respect frozen replies and complete-turn boundaries. Use high-water/target hysteresis rather than a per-turn sliding cut. Recover interrupted prepared records idempotently before another compaction. An AI-only transcript has no complete-turn boundary, so every visible position past the frozen prefix counts as a turn end
 
 See `include/DATA_SCHEMA.md` and `src/rebuild/AGENTS.md` for lifecycle contracts.

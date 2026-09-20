@@ -11,6 +11,7 @@ import {
     isBatchReady,
     trimTailTurns,
 } from '../../src/extraction/scheduler.js';
+import { getSanitizedTokenSum } from '../../src/utils/message-sanitizer.js';
 
 // Timestamp counter for test messages
 let testTimestamp = 1000000;
@@ -371,6 +372,22 @@ describe('getBackfillMessageIds (token-based)', () => {
         expect(result.batchCount).toBe(0);
         expect(result.messageIds).toEqual([]);
     });
+
+    it('keeps the batch for an AI-only transcript with no Bot→User boundary', () => {
+        // Two long replies plus an incomplete short tail. Trimming the tail leaves a
+        // batch that does not reach the end of the chat, so no index inside it can be
+        // followed by a user message — the trim finds no boundary at all.
+        const chat = makeChat([
+            [LONG_BOT_MESSAGE, false],
+            [LONG_BOT_MESSAGE, false],
+            ['short reply', false],
+        ]);
+        const budget = getSanitizedTokenSum(chat, [0]);
+
+        const result = getBackfillMessageIds(chat, {}, budget);
+        expect(result.messageIds).toEqual([0, 1]);
+        expect(result.batchCount).toBeGreaterThanOrEqual(1);
+    });
 });
 
 describe('trimTailTurns', () => {
@@ -394,7 +411,7 @@ describe('trimTailTurns', () => {
         expect(result).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     });
 
-    it('returns original when trimming would empty the batch', () => {
+    it('returns the whole batch when trimming would empty it, as a new array', () => {
         // Single turn: U, B — trimming 1 turn would empty it
         const chat = makeChat([
             ['u1', true],
@@ -402,7 +419,21 @@ describe('trimTailTurns', () => {
         ]);
         const ids = [0, 1];
         const result = trimTailTurns(chat, ids, 1);
-        expect(result).toBe(ids); // Same reference, not trimmed
+        expect(result).toEqual(ids);
+        expect(result).not.toBe(ids);
+    });
+
+    it('returns a new array when no Bot→User boundary exists (AI-only batch)', () => {
+        // B, B, B with the batch ending mid-run: no boundary anywhere in the slice
+        const chat = makeChat([
+            ['b0', false],
+            ['b1', false],
+            ['b2', false],
+        ]);
+        const ids = [0, 1];
+        const result = trimTailTurns(chat, ids, 1);
+        expect(result).toEqual([0, 1]);
+        expect(result).not.toBe(ids);
     });
 
     it('handles multi-message turns (U,U,B,B counts as 1 turn)', () => {
@@ -439,7 +470,7 @@ describe('trimTailTurns', () => {
         expect(result).toEqual([0, 1, 2, 3]);
     });
 
-    it('returns original when chat has only user messages (no Bot→User boundary)', () => {
+    it('returns the whole batch when the chat has only user messages (no Bot→User boundary)', () => {
         const chat = makeChat([
             ['u1', true],
             ['u2', true],
@@ -447,8 +478,9 @@ describe('trimTailTurns', () => {
         ]);
         const ids = [0, 1, 2];
         const result = trimTailTurns(chat, ids, 1);
-        // No bot message → no turn boundary found → can't trim → return original
-        expect(result).toBe(ids);
+        // No bot message → no turn boundary found → can't trim → whole batch returned
+        expect(result).toEqual([0, 1, 2]);
+        expect(result).not.toBe(ids);
     });
 });
 

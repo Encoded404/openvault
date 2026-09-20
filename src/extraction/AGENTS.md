@@ -33,7 +33,8 @@ For event dedup thresholds (cross-batch/intra-batch Jaccard) see `include/DATA_S
 - **Gate downstream use on lifecycle readiness.** Rebuild and compaction must complete coverage, enrichment, and persistence before `ready`; `needs_rebuild`, `rebuilding`, and `rebuild_failed` remain unavailable to retrieval.
 
 ## SWIPE PROTECTION
-- **Trim tail turns from extraction batches.** `trimTailTurns(chat, ids, N)` removes N complete User+Bot turns from the tail using the same Bot→User boundary logic as `snapToTurnBoundary()`.
+- **Trim tail turns from extraction batches.** `trimTailTurns(chat, ids, N)` removes N complete User+Bot turns from the tail using the same Bot→User boundary logic as `snapToTurnBoundary()`
+- **`trimTailTurns` must never return the caller's array.** `getBackfillMessageIds()` clears and refills the array it passes in (`ids.length = 0`), so an identity return silently wipes the entire batch. Always return a slice, including on the no-boundary path taken by AI-only transcripts.
 - **Emergency Cut bypasses trimming.** Pass `isEmergencyCut=true` to skip swipe protection — emergency extractions need all available data.
 - **Never trim to empty.** If trimming would empty the batch, return the original array (start-of-chat protection).
 - **Trim once on the full list for backfill.** In `getBackfillMessageIds()`, apply `trimTailTurns` after the incomplete-last-batch trim, then recalculate `batchCount`.

@@ -13,7 +13,7 @@ import {
     getSanitizedTokenCount as getMessageTokenCount,
     getSanitizedTokenSum as getTokenSum,
 } from '../utils/message-sanitizer.js';
-import { countTurns, snapToTurnBoundary } from '../utils/tokens.js';
+import { countTurns, getNextNonSystemMessage, snapToTurnBoundary } from '../utils/tokens.js';
 
 /**
  * Get a stable fingerprint for a message.
@@ -104,14 +104,15 @@ export function isBatchReady(chat, data, tokenBudget, maxTurns = Infinity) {
 /**
  * Trim N complete turns from the tail of a snapped batch.
  * A "turn" ends at a Bot→User boundary (bot message followed by user message or end of chat).
- * Returns the trimmed array, or the original if trimming would empty it.
+ * Returns the trimmed array, or the full batch if trimming would empty it.
+ * Always returns a new array, never the caller's.
  * @param {Object[]} chat - Full chat messages array
  * @param {number[]} messageIds - Ordered message indices to trim
  * @param {number} turnsToTrim - Number of complete turns to remove from tail
- * @returns {number[]} Trimmed message IDs, or original if trim would empty it
+ * @returns {number[]} Trimmed message IDs, never the caller's array
  */
 export function trimTailTurns(chat, messageIds, turnsToTrim) {
-    if (turnsToTrim <= 0 || messageIds.length === 0) return messageIds;
+    if (turnsToTrim <= 0 || messageIds.length === 0) return messageIds.slice();
 
     let cutIndex = messageIds.length;
     let turnsFound = 0;
@@ -124,9 +125,7 @@ export function trimTailTurns(chat, messageIds, turnsToTrim) {
         if (msg?.is_system) continue;
 
         // Walk forward past system messages to find the next real message
-        let nextIdx = id + 1;
-        while (chat[nextIdx]?.is_system) nextIdx++;
-        const nextInChat = chat[nextIdx];
+        const nextInChat = getNextNonSystemMessage(chat, id);
 
         // Bot→User boundary (same logic as snapToTurnBoundary)
         if (msg && !msg.is_user && (!nextInChat || nextInChat.is_user)) {
@@ -147,12 +146,15 @@ export function trimTailTurns(chat, messageIds, turnsToTrim) {
         }
     }
 
-    // If no boundaries found, return original
-    if (turnsFound === 0) return messageIds;
+    // Return a copy, never the caller's array: getBackfillMessageIds clears the array
+    // it receives (`messageIds.length = 0`) and re-pushes the result into it, which
+    // silently wiped whole batches for AI-only transcripts, where no Bot→User boundary
+    // exists and this is the only path that can run.
+    if (turnsFound === 0) return messageIds.slice();
 
-    // If trimming would empty the batch, return original (protect start-of-chat)
+    // If trimming would empty the batch, keep the whole batch (protect start-of-chat)
     const trimmed = messageIds.slice(0, cutIndex);
-    return trimmed.length > 0 ? trimmed : messageIds;
+    return trimmed.length > 0 ? trimmed : messageIds.slice();
 }
 
 /**
@@ -287,8 +289,12 @@ export function getBackfillMessageIds(chat, data, tokenBudget, isEmergencyCut = 
     if (!isEmergencyCut && messageIds.length > 0) {
         const before = messageIds.length;
         const trimmed = trimTailTurns(chat, messageIds, SWIPE_PROTECTION_TAIL_MESSAGES);
-        messageIds.length = 0;
-        messageIds.push(...trimmed);
+        // Guard the copy: if the trim returned this very array, clearing it below
+        // would empty both the source and the batch.
+        if (trimmed !== messageIds) {
+            messageIds.length = 0;
+            messageIds.push(...trimmed);
+        }
         // If we trimmed messages, recalculate batchCount from the remaining messages
         if (messageIds.length < before) {
             let sum = 0;

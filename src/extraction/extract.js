@@ -1719,7 +1719,15 @@ export async function extractAllMessages(optionsOrCallback) {
         if (processedFps.size > 0) {
             showToast('info', `All eligible messages already extracted (${processedFps.size} messages have memories)`);
         } else {
-            showToast('warning', `Not enough messages for a complete batch (need token budget met)`);
+            // An empty batch list has two causes: the unextracted messages do not reach
+            // the extraction token budget, or batch selection found no complete turn
+            // boundary (an AI-only chat has no user message, so it can never have one).
+            showToast(
+                'warning',
+                'No complete batch available: the unextracted messages do not reach the ' +
+                    `extraction token budget (${tokenBudget} tokens), or no complete turn ` +
+                    'boundary was found. Enable Debug Mode for a full diagnosis.'
+            );
         }
         return { messagesProcessed: 0, eventsCreated: 0 };
     }

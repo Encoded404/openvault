@@ -19,6 +19,7 @@ import { getSessionSignal, operationState } from '../state.js';
 import { getCurrentChatId, getOpenVaultData, saveOpenVaultData } from '../store/chat-data.js';
 import { logInfo } from '../utils/logging.js';
 import { getSanitizedTokenCount } from '../utils/message-sanitizer.js';
+import { getNextNonSystemMessage } from '../utils/tokens.js';
 
 function backupLegacyData(data) {
     const copy = structuredClone(data);
@@ -39,11 +40,23 @@ function resetDerivedData(data) {
     data.archives = { revision: 0, segments: [], next_sequence: 1, rollups: [] };
 }
 
-function createBatches(chat, boundary, tokenBudget, maxTurns) {
+/**
+ * Split the fixed rebuild source range into complete-turn batches.
+ * @param {Object[]} chat - Full chat messages array
+ * @param {number} boundary - Exclusive end index of the rebuild source range
+ * @param {number} tokenBudget - Token budget per batch
+ * @param {number} maxTurns - Maximum turns per batch
+ * @returns {number[][]} Ordered batches of message indices
+ */
+export function createBatches(chat, boundary, tokenBudget, maxTurns) {
     const ids = [];
     for (let index = 0; index < boundary; index++) {
         if (!chat[index]?.is_system) ids.push(index);
     }
+    // An AI-only transcript has no Bot→User boundary, so the completeness test below
+    // would never close a batch and the token budget would be ignored. With no user
+    // message to orphan, every message ends a turn.
+    const hasUserTurns = ids.some((index) => chat[index]?.is_user);
     const batches = [];
     let batch = [];
     let tokens = 0;
@@ -52,8 +65,8 @@ function createBatches(chat, boundary, tokenBudget, maxTurns) {
         batch.push(index);
         tokens += getSanitizedTokenCount(chat, index);
         if (!chat[index].is_user) turns++;
-        const next = chat[index + 1];
-        const completeTurn = !next || next.is_user;
+        const next = getNextNonSystemMessage(chat, index);
+        const completeTurn = !hasUserTurns || !next || next.is_user;
         if (completeTurn && (tokens >= tokenBudget || turns >= maxTurns)) {
             batches.push(batch);
             batch = [];

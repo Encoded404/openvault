@@ -401,6 +401,22 @@ describe('compaction planning', () => {
         expect(planCompaction(chat, data, 1, 0, 1)).toEqual([2, 3]);
     });
 
+    it('compacts an AI-only transcript that never reaches a Bot→User boundary', () => {
+        const aiChat = Array.from({ length: 4 }, (_, index) => ({
+            mes: `reply ${index} ${'visible dialogue '.repeat(20)}`,
+            is_user: false,
+            is_system: false,
+            send_date: `ai-${index}`,
+        }));
+        const data = { processed_message_ids: aiChat.map(getMessageRevision), archives: { segments: [] } };
+        const total = getSanitizedTokenSum(aiChat, [0, 1, 2, 3]);
+        const target = getSanitizedTokenSum(aiChat, [2, 3]);
+
+        // Without the AI-only relaxation only end-of-chat counts as a turn end, so the
+        // whole visible range would be sealed instead of just the target slice.
+        expect(diagnoseCompactionPlan(aiChat, data, total - 1, target).indices).toEqual([0, 1]);
+    });
+
     it('reports the first unprocessed source that blocks compaction', () => {
         const data = { processed_message_ids: [], archives: { segments: [] } };
         const result = diagnoseCompactionPlan(chat, data, 1, 0);

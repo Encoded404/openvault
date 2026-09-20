@@ -17,7 +17,8 @@ vi.mock('../../src/extraction/extract.js', () => ({
 }));
 vi.mock('../../src/services/st-vector.js', () => ({ purgeSTCollection: mocks.purgeSTCollection }));
 
-import { startFullRebuild } from '../../src/rebuild/rebuild.js';
+import { createBatches, startFullRebuild } from '../../src/rebuild/rebuild.js';
+import { getSanitizedTokenSum } from '../../src/utils/message-sanitizer.js';
 
 function legacyData() {
     return {
@@ -90,5 +91,42 @@ describe('mandatory full rebuild', () => {
         expect(mocks.compactIfNeeded).toHaveBeenCalledOnce();
         expect(mocks.purgeSTCollection).not.toHaveBeenCalled();
         expect(save).toHaveBeenCalled();
+    });
+});
+
+describe('createBatches', () => {
+    it('closes batches on the token budget in an AI-only transcript', () => {
+        // No user turn anywhere, so no Bot→User boundary exists to close a batch and the
+        // token budget would otherwise be ignored.
+        const chat = Array.from({ length: 4 }, (_, index) => ({
+            mes: `reply ${index} ${'visible dialogue '.repeat(20)}`,
+            is_user: false,
+            is_system: false,
+            send_date: `ai-${index}`,
+        }));
+        const budget = getSanitizedTokenSum(chat, [0]);
+
+        const batches = createBatches(chat, chat.length, budget, Infinity);
+
+        expect(batches.flat()).toEqual([0, 1, 2, 3]);
+        expect(batches.length).toBeGreaterThan(1);
+    });
+
+    it('still closes batches only at turn boundaries when user turns exist', () => {
+        const chat = [
+            { mes: 'user one', is_user: true, is_system: false },
+            { mes: 'bot one', is_user: false, is_system: false },
+            { mes: 'user two', is_user: true, is_system: false },
+            { mes: 'bot two', is_user: false, is_system: false },
+        ];
+
+        // Budget of one token: only a complete turn may close, so the opening user
+        // message stays with its reply even though the budget is met at index 0.
+        const batches = createBatches(chat, chat.length, 1, Infinity);
+
+        expect(batches).toEqual([
+            [0, 1],
+            [2, 3],
+        ]);
     });
 });

@@ -27,7 +27,8 @@
 - **Read legacy arrays transparently.** Fall back to parsing `number[]` if `embedding_b64` is missing.
 
 ## TOKEN BOUNDARIES (`tokens.js`)
-- **Snap arrays to turn boundaries.** Use `snapToTurnBoundary()` to trim message indices backward until reaching a valid `Bot -> User` transition. Never orphan a User message from its Bot response during auto-hide or batching.
+- **Snap arrays to turn boundaries.** Use `snapToTurnBoundary()` to trim message indices backward until reaching a valid `Bot -> User` transition. Never orphan a User message from its Bot response during auto-hide or batching
+- **Fall back for AI-only transcripts.** A transcript with no user message can never reach a `Bot -> User` transition, so `snapToTurnBoundary()` returns the slice as-is and `countTurns()` counts each assistant message as a turn. Returning `[]` or `0` there stalls extraction batching and silently disables the `extractionMaxTurns` cap.
 
 ## REGEX & MULTILINGUAL
 - **Never use `\b` for non-ASCII text.** Word boundaries only match ASCII `[A-Za-z0-9_]`. Use `(?<![\p{L}\p{N}_])` / `(?![\p{L}\p{N}])` with the `u` flag instead.

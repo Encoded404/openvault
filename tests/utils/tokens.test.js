@@ -67,6 +67,17 @@ describe('countTurns', () => {
         // Only the Bot at index 2 counts as a turn (follows User)
         expect(countTurns(chat, [0, 1, 2])).toBe(1);
     });
+
+    it('counts assistant messages as turns in an AI-only transcript', async () => {
+        const { countTurns } = await import('../../src/utils/tokens.js');
+        const chat = [
+            { mes: 'b0', is_user: false, is_system: false },
+            { mes: 'sys', is_user: false, is_system: true },
+            { mes: 'b2', is_user: false, is_system: false },
+        ];
+        // No Bot→User boundary can exist, so each assistant message counts as a turn
+        expect(countTurns(chat, [0, 1, 2])).toBe(2);
+    });
 });
 
 describe('countTokens', () => {
@@ -209,14 +220,29 @@ describe('snapToTurnBoundary', () => {
         expect(result).toEqual([0, 1]);
     });
 
-    it('returns empty array if no valid boundary found', async () => {
+    it('returns the slice as-is for an AI-only transcript', async () => {
         const { snapToTurnBoundary } = await import('../../src/utils/tokens.js');
 
-        // B(0) B(1)
+        // B(0) B(1) B(2) — no user message anywhere, so no boundary can exist
         const chat = [
             { mes: 'b0', is_user: false },
             { mes: 'b1', is_user: false },
             { mes: 'b2', is_user: false },
+        ];
+
+        const result = snapToTurnBoundary(chat, [0, 1]);
+        expect(result).toEqual([0, 1]);
+    });
+
+    it('returns empty array if no valid boundary found', async () => {
+        const { snapToTurnBoundary } = await import('../../src/utils/tokens.js');
+
+        // B(0) B(1) B(2) U(3) — the chat has a user turn, so the boundary walk applies
+        const chat = [
+            { mes: 'b0', is_user: false },
+            { mes: 'b1', is_user: false },
+            { mes: 'b2', is_user: false },
+            { mes: 'u3', is_user: true },
         ];
 
         // [0, 1] -> next is B(2) ✗ -> snap back, but no index has a User next -> []
@@ -304,14 +330,29 @@ describe('snapToTurnBoundary — system messages', () => {
         expect(result).toEqual([0, 1]);
     });
 
-    it('returns empty when system message blocks boundary from reaching User', async () => {
+    it('returns the slice as-is when an AI-only transcript has no boundary to reach', async () => {
         const { snapToTurnBoundary } = await import('../../src/utils/tokens.js');
 
-        // B(0) SYS(1) B(2)
+        // B(0) SYS(1) B(2) — no user message anywhere
         const chat = [
             { mes: 'b0', is_user: false, is_system: false },
             { mes: 'sys', is_user: false, is_system: true },
             { mes: 'b2', is_user: false, is_system: false },
+        ];
+
+        const result = snapToTurnBoundary(chat, [0]);
+        expect(result).toEqual([0]);
+    });
+
+    it('returns empty when system message blocks boundary from reaching User', async () => {
+        const { snapToTurnBoundary } = await import('../../src/utils/tokens.js');
+
+        // B(0) SYS(1) B(2) U(3)
+        const chat = [
+            { mes: 'b0', is_user: false, is_system: false },
+            { mes: 'sys', is_user: false, is_system: true },
+            { mes: 'b2', is_user: false, is_system: false },
+            { mes: 'u3', is_user: true, is_system: false },
         ];
 
         const result = snapToTurnBoundary(chat, [0]);
