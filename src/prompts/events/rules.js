@@ -55,6 +55,8 @@ Rate each event from 1 (trivial) to 5 (critical):
 </importance_scale>
 
 <field_instructions>
+source_message_ids: The <source> tag wrapping each input message carries its id, e.g. <source source_message_id="412">. List the id of every source whose text supports this event. Always an array of integers, even for a single source, and never an id that is not shown in the input.
+
 characters_involved: Characters who actively participated in or were directly affected by this event (the main actors).
 
 witnesses: ALL named characters from the lore who would know this event occurred — includes characters_involved PLUS any named characters present in the scene, observing, or mentioned as being aware. In a 1-on-1 scene between User and Character, BOTH are witnesses. If you are unsure whether a character knows, include them — the system will filter appropriately. Do NOT include generic NPCs described only by role (e.g., "saleswoman", "passerby", "waiter", "guard") — only characters with proper names.
@@ -73,5 +75,6 @@ Step 1: List <=5 actions/emotions/facts/promises/preferences from new messages.
 Step 2: Check <established_memories> -> any already recorded?
 Step 3: Continuation != new event -> find newest progression | output [].
 Step 4: NEW events -> assign importance(1-5) + specific summary + witnesses.
-Step 5: Output final JSON with "events" key.
+Step 5: Tag each event with source_message_ids copied from its <source> tags.
+Step 6: Output final JSON with "events" key.
 </draft_process>`;
