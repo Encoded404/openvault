@@ -185,7 +185,7 @@ async function fetchFallbackMemories(requiredMessages, contextMessages, contextP
     const sourceLines = contextMessages
         .map((message) => {
             const speaker = message.is_user ? contextParams.names.user : message.name || contextParams.names.char;
-            return `<source source_message_id="${escapeExtractionXml(message.id)}" fingerprint="${escapeExtractionXml(getMessageRevision(message))}" role="${message.is_user ? 'user' : 'assistant'}">[${escapeExtractionXml(speaker)}]: ${escapeExtractionXml(sanitizeMessageContent(message.mes, !!message.is_user))}</source>`;
+            return `<source source_message_id="${escapeExtractionXml(message.id)}" role="${message.is_user ? 'user' : 'assistant'}">[${escapeExtractionXml(speaker)}]: ${escapeExtractionXml(sanitizeMessageContent(message.mes, !!message.is_user))}</source>`;
         })
         .join('\n');
     const prompt = buildFallbackExtractionPrompt({
@@ -1306,7 +1306,7 @@ export async function extractMemories(messageIds = null, targetChatId = null, op
         const messagesText = messages
             .map((m) => {
                 const speaker = m.is_user ? userName : m.name || characterName;
-                return `<source source_message_id="${escapeExtractionXml(m.id)}" fingerprint="${escapeExtractionXml(getMessageRevision(m))}" role="${m.is_user ? 'user' : 'assistant'}">[${escapeExtractionXml(speaker)}]: ${escapeExtractionXml(sanitizeMessageContent(m.mes, !!m.is_user))}</source>`;
+                return `<source source_message_id="${escapeExtractionXml(m.id)}" role="${m.is_user ? 'user' : 'assistant'}">[${escapeExtractionXml(speaker)}]: ${escapeExtractionXml(sanitizeMessageContent(m.mes, !!m.is_user))}</source>`;
             })
             .join('\n\n');
 

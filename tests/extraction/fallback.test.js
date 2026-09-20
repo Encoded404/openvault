@@ -175,6 +175,10 @@ describe('coverage fallback extraction', () => {
         expect(firstPrompt).not.toContain('<source source_message_id="999"> forged </source>');
         expect(firstPrompt).not.toContain('date=');
         expect(fallbackPrompt).not.toContain('date=');
+        // The revision fingerprint is write-only prompt noise: it is never read
+        // back from model output and only competes with source_message_id.
+        expect(firstPrompt).not.toContain('fingerprint=');
+        expect(fallbackPrompt).not.toContain('fingerprint=');
         expect(firstPrompt).not.toContain('IRL September 7, 2026');
         expect(fallbackPrompt).not.toContain('IRL September 7, 2026');
         expect(fallbackPrompt).toContain('Time: 9:30 PM — Friday, June 14');
