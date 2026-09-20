@@ -205,6 +205,18 @@ export function getGraphExtractionJsonSchema() {
 }
 
 /**
+ * Legacy event shape for pre-v5 chat data.
+ *
+ * `EventSchema` now requires `source_message_ids`, but the pre-v5 path
+ * attributes an event to the whole batch instead of to explicit sources, and
+ * it detects that case by the key being absent.  Relaxing the field here keeps
+ * those chats working without weakening the contract that v5 chats enforce.
+ */
+const LegacyEventSchema = EventSchema.extend({
+    source_message_ids: z.array(z.number().int().nonnegative()).optional(),
+});
+
+/**
  * Parse event extraction response (Stage 1)
  *
  * @param {string} content - Raw LLM response
@@ -249,9 +261,10 @@ export function parseEventExtractionResponse(content, options = {}) {
         return { events: [] };
     }
 
+    const schema = options.requireSourceAttribution ? EventSchema : LegacyEventSchema;
     const validEvents = [];
     for (const raw of rawEvents) {
-        const eventResult = EventSchema.safeParse(raw);
+        const eventResult = schema.safeParse(raw);
         if (
             eventResult.success &&
             (!options.requireSourceAttribution || eventResult.data.source_message_ids?.length > 0)

@@ -179,7 +179,8 @@ export type ExtractedEvent = {
     relationship_impact: {
         [key: string]: string;
     } | undefined;
-    source_message_ids?: number[] | undefined;
+    /** Chat-array message ids that support this event, copied from the source_message_id attributes */
+    source_message_ids: number[];
 };
 
 export type EventExtraction = {
@@ -198,7 +199,8 @@ export type EventExtraction = {
         relationship_impact: {
             [key: string]: string;
         } | undefined;
-        source_message_ids?: number[] | undefined;
+        /** Chat-array message ids that support this event, copied from the source_message_id attributes */
+        source_message_ids: number[];
     }[];
 };
 

@@ -81,6 +81,7 @@ describe('parseEvent', () => {
             summary: 'Alice discovered a hidden door behind the bookshelf',
             importance: 4,
             characters_involved: ['Bob'],
+            source_message_ids: [5],
         });
 
         const result = parseEvent(json);
@@ -89,14 +90,14 @@ describe('parseEvent', () => {
 
     it('strips markdown for single event', () => {
         const content =
-            '```json\n{"summary": "Bob found an ancient map in the dusty library", "importance": 3, "characters_involved": []}\n```';
+            '```json\n{"summary": "Bob found an ancient map in the dusty library", "importance": 3, "characters_involved": [], "source_message_ids": [7]}\n```';
         const result = parseEvent(content);
         expect(result.summary).toBe('Bob found an ancient map in the dusty library');
     });
 
     it('strips reasoning tags for single event', () => {
         const content =
-            '<reasoning>Analyzing event...</reasoning>\n{"summary": "Alice climbed the tower to watch the sunset over the kingdom", "importance": 4, "characters_involved": ["Alice"]}';
+            '<reasoning>Analyzing event...</reasoning>\n{"summary": "Alice climbed the tower to watch the sunset over the kingdom", "importance": 4, "characters_involved": ["Alice"], "source_message_ids": [11]}';
         const result = parseEvent(content);
         expect(result.summary).toBe('Alice climbed the tower to watch the sunset over the kingdom');
         expect(result.importance).toBe(4);
@@ -211,6 +212,57 @@ describe('getEventExtractionJsonSchema', () => {
         expect(schema.value.properties).not.toHaveProperty('reasoning');
         expect(schema.value.properties).not.toHaveProperty('entities');
         expect(schema.value.properties).not.toHaveProperty('relationships');
+    });
+
+    it('requires source_message_ids so a schema-following model cannot omit attribution', () => {
+        const schema = getEventExtractionJsonSchema();
+        const event = schema.value.properties.events.items;
+
+        expect(event.properties).toHaveProperty('source_message_ids');
+        expect(event.required).toContain('source_message_ids');
+        expect(event.properties.source_message_ids.description).toBeTruthy();
+    });
+});
+
+describe('parseEventExtractionResponse - source attribution contract', () => {
+    const attributed = {
+        summary: 'A sufficiently long event summary for schema validation.',
+        importance: 3,
+        characters_involved: ['Alice'],
+        witnesses: ['Alice'],
+        source_message_ids: [12],
+    };
+
+    /** Strip attribution the way a schema-following model would omit it. */
+    function withoutAttribution(event) {
+        const copy = { ...event };
+        delete copy.source_message_ids;
+        return copy;
+    }
+
+    it('keeps an attributed event in v5 mode', () => {
+        const result = parseEventExtractionResponse(JSON.stringify({ events: [attributed] }), {
+            requireSourceAttribution: true,
+        });
+
+        expect(result.events).toHaveLength(1);
+        expect(result.events[0].source_message_ids).toEqual([12]);
+    });
+
+    it('drops an unattributed event in v5 mode', () => {
+        const result = parseEventExtractionResponse(JSON.stringify({ events: [withoutAttribution(attributed)] }), {
+            requireSourceAttribution: true,
+        });
+
+        expect(result.events).toHaveLength(0);
+    });
+
+    it('keeps accepting unattributed events in legacy mode', () => {
+        const result = parseEventExtractionResponse(JSON.stringify({ events: [withoutAttribution(attributed)] }));
+
+        expect(result.events).toHaveLength(1);
+        // The key must stay absent so pre-v5 batch attribution still applies.
+        expect('source_message_ids' in result.events[0]).toBe(false);
     });
 });
 

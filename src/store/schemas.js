@@ -138,8 +138,13 @@ export const EventSchema = z.object({
     relationship_impact: z.record(z.string().trim(), z.string()).optional().default({}),
     // Chat-array message ids used for exact source attribution.  An event may
     // span more than one source message, but it must never implicitly claim
-    // the entire extraction batch.
-    source_message_ids: z.array(z.number().int().nonnegative()).optional(),
+    // the entire extraction batch.  Required by the output contract: leaving
+    // the field optional kept it out of the JSON schema `required` list, so
+    // models that follow the schema rather than the prose omitted it and the
+    // affected events were discarded.
+    source_message_ids: z
+        .array(z.number().int().nonnegative())
+        .describe('Chat-array message ids that support this event, copied from the source_message_id attributes'),
 });
 
 export const EventExtractionSchema = z.object({
