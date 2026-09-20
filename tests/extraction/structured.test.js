@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { resetDeps, setDeps } from '../../src/deps.js';
 import {
     _testStripMarkdown,
+    coerceSourceMessageIds,
     GlobalSynthesisSchema,
     getEventExtractionJsonSchema,
     getGraphExtractionJsonSchema,
@@ -15,6 +17,17 @@ import {
     parseUnifiedReflectionResponse,
     RelationshipImpactSchema,
 } from '../../src/extraction/structured.js';
+
+/**
+ * Strip attribution the way a schema-following model would omit it.
+ * @param {object} event - Event object
+ * @returns {object} Event without source_message_ids
+ */
+function withoutAttribution(event) {
+    const copy = { ...event };
+    delete copy.source_message_ids;
+    return copy;
+}
 
 // --- Lazy Exit Tests (Empty Output After Thinking Tags) ---
 describe('parseEventExtractionResponse - lazy exits', () => {
@@ -233,13 +246,6 @@ describe('parseEventExtractionResponse - source attribution contract', () => {
         source_message_ids: [12],
     };
 
-    /** Strip attribution the way a schema-following model would omit it. */
-    function withoutAttribution(event) {
-        const copy = { ...event };
-        delete copy.source_message_ids;
-        return copy;
-    }
-
     it('keeps an attributed event in v5 mode', () => {
         const result = parseEventExtractionResponse(JSON.stringify({ events: [attributed] }), {
             requireSourceAttribution: true,
@@ -263,6 +269,99 @@ describe('parseEventExtractionResponse - source attribution contract', () => {
         expect(result.events).toHaveLength(1);
         // The key must stay absent so pre-v5 batch attribution still applies.
         expect('source_message_ids' in result.events[0]).toBe(false);
+    });
+
+    it('coerces the scalar and string shapes a model actually emits', () => {
+        const cases = [
+            [12, [12]],
+            ['12', [12]],
+            [['12'], [12]],
+            [[' 12 '], [12]],
+            [
+                [412, 413],
+                [412, 413],
+            ],
+        ];
+
+        for (const [value, expected] of cases) {
+            const result = parseEventExtractionResponse(
+                JSON.stringify({ events: [{ ...attributed, source_message_ids: value }] }),
+                { requireSourceAttribution: true }
+            );
+
+            expect(result.events, JSON.stringify(value)).toHaveLength(1);
+            expect(result.events[0].source_message_ids).toEqual(expected);
+        }
+    });
+
+    it('collapses duplicate ids instead of discarding the event', () => {
+        const result = parseEventExtractionResponse(
+            JSON.stringify({ events: [{ ...attributed, source_message_ids: [412, 412] }] }),
+            { requireSourceAttribution: true }
+        );
+
+        expect(result.events).toHaveLength(1);
+        expect(result.events[0].source_message_ids).toEqual([412]);
+    });
+
+    it('still discards events whose attribution cannot be a chat index', () => {
+        for (const value of ['not-an-id', null, -1, 1.5, {}, true, [412, 'not-an-id']]) {
+            const result = parseEventExtractionResponse(
+                JSON.stringify({ events: [{ ...attributed, source_message_ids: value }] }),
+                { requireSourceAttribution: true }
+            );
+
+            expect(result.events, JSON.stringify(value)).toHaveLength(0);
+        }
+    });
+});
+
+describe('coerceSourceMessageIds', () => {
+    it('normalizes usable shapes', () => {
+        expect(coerceSourceMessageIds(412)).toEqual([412]);
+        expect(coerceSourceMessageIds('412')).toEqual([412]);
+        expect(coerceSourceMessageIds(['412', 413])).toEqual([412, 413]);
+        expect(coerceSourceMessageIds([412, 412])).toEqual([412]);
+        expect(coerceSourceMessageIds([])).toEqual([]);
+    });
+
+    it('returns nothing when any entry cannot be a chat index', () => {
+        expect(coerceSourceMessageIds(['abc'])).toEqual([]);
+        expect(coerceSourceMessageIds([-1])).toEqual([]);
+        expect(coerceSourceMessageIds([1.5])).toEqual([]);
+        expect(coerceSourceMessageIds([null])).toEqual([]);
+        expect(coerceSourceMessageIds([412, 'abc'])).toEqual([]);
+    });
+});
+
+describe('parseEventExtractionResponse - drop visibility', () => {
+    const event = {
+        summary: 'A sufficiently long event summary for schema validation.',
+        importance: 3,
+        source_message_ids: [412],
+    };
+
+    afterEach(() => resetDeps());
+
+    it('warns with counts when unattributed events are discarded', () => {
+        const warn = vi.fn();
+        setDeps({ console: { log: vi.fn(), warn, error: vi.fn() } });
+
+        parseEventExtractionResponse(JSON.stringify({ events: [withoutAttribution(event)] }), {
+            requireSourceAttribution: true,
+        });
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain('carried no usable source ids');
+    });
+
+    it('stays quiet when every event keeps its attribution', () => {
+        const warn = vi.fn();
+        setDeps({ console: { log: vi.fn(), warn, error: vi.fn() } });
+
+        parseEventExtractionResponse(JSON.stringify({ events: [event] }), { requireSourceAttribution: true });
+
+        expect(warn).not.toHaveBeenCalled();
     });
 });
 

@@ -82,7 +82,7 @@ import {
 } from '../store/chat-data.js';
 import { showToast } from '../utils/dom.js';
 import { cyrb53, getEmbedding, hasEmbedding, isStSynced, markStSynced } from '../utils/embedding-codec.js';
-import { logDebug, logError, logInfo } from '../utils/logging.js';
+import { logDebug, logError, logInfo, logWarn } from '../utils/logging.js';
 import { sanitizeMessageContent } from '../utils/message-sanitizer.js';
 import { createLadderQueue } from '../utils/queue.js';
 import { isExtensionEnabled, safeSetExtensionPrompt, yieldToMain } from '../utils/st-helpers.js';
@@ -1122,6 +1122,7 @@ async function enrichAndDedupEvents(
     );
     const legacyBatchAttribution = allowLegacyBatchAttribution;
 
+    let discardedAttribution = 0;
     let events = rawEvents
         .map((event, index) => {
             const requestedIds =
@@ -1138,6 +1139,7 @@ async function enrichAndDedupEvents(
                     uniqueIds.size !== requestedIds.length ||
                     requestedIds.some((id) => !sourceById.has(id)))
             ) {
+                discardedAttribution++;
                 return null;
             }
             const sources = requestedIds.map((id) => sourceById.get(id));
@@ -1164,6 +1166,13 @@ async function enrichAndDedupEvents(
         .filter(Boolean);
 
     events = events.filter((event) => event.message_fingerprints.length > 0);
+
+    if (discardedAttribution > 0) {
+        logWarn(
+            `Discarded ${discardedAttribution}/${rawEvents.length} events with unknown, duplicate, or empty source ids; ` +
+                'their messages fall through to the coverage pass'
+        );
+    }
 
     if (events.length > 0) {
         await enrichEventsWithEmbeddings(events);

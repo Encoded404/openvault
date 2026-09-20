@@ -217,6 +217,44 @@ const LegacyEventSchema = EventSchema.extend({
 });
 
 /**
+ * Normalize model-supplied source ids into a non-negative integer array.
+ *
+ * The ids reach the model as XML attribute values, so a bare integer or a
+ * numeric string is a formatting slip rather than a wrong source. Duplicates
+ * collapse because citing the same source twice says nothing new. Returns an
+ * empty array when any entry cannot be a chat index, which callers treat
+ * exactly like missing attribution.
+ *
+ * @param {unknown} value - Raw `source_message_ids` value from the model
+ * @returns {number[]} Coerced ids, or an empty array when unusable
+ */
+export function coerceSourceMessageIds(value) {
+    const entries = Array.isArray(value) ? value : [value];
+    const ids = [];
+    for (const entry of entries) {
+        const numeric = typeof entry === 'string' ? Number(entry.trim()) : entry;
+        if (!Number.isInteger(numeric) || numeric < 0) return [];
+        if (!ids.includes(numeric)) ids.push(numeric);
+    }
+    return ids;
+}
+
+/**
+ * Normalize an event's attribution before schema validation.
+ *
+ * Only rewrites the field when the model emitted it, so the legacy
+ * batch-attribution path still observes the key as absent.
+ *
+ * @param {unknown} raw - Raw event object from the model
+ * @returns {unknown} Event with normalized attribution
+ */
+function normalizeRawEvent(raw) {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    if (!('source_message_ids' in raw)) return raw;
+    return { ...raw, source_message_ids: coerceSourceMessageIds(raw.source_message_ids) };
+}
+
+/**
  * Parse event extraction response (Stage 1)
  *
  * @param {string} content - Raw LLM response
@@ -261,20 +299,31 @@ export function parseEventExtractionResponse(content, options = {}) {
         return { events: [] };
     }
 
-    const schema = options.requireSourceAttribution ? EventSchema : LegacyEventSchema;
+    const requireSourceAttribution = Boolean(options.requireSourceAttribution);
+    const schema = requireSourceAttribution ? EventSchema : LegacyEventSchema;
     const validEvents = [];
+    let invalidEvents = 0;
+    let unattributedEvents = 0;
+
     for (const raw of rawEvents) {
-        const eventResult = schema.safeParse(raw);
-        if (
-            eventResult.success &&
-            (!options.requireSourceAttribution || eventResult.data.source_message_ids?.length > 0)
-        ) {
-            validEvents.push(eventResult.data);
+        const eventResult = schema.safeParse(normalizeRawEvent(raw));
+        if (!eventResult.success) {
+            invalidEvents++;
+            continue;
         }
+        if (requireSourceAttribution && !(eventResult.data.source_message_ids?.length > 0)) {
+            unattributedEvents++;
+            continue;
+        }
+        validEvents.push(eventResult.data);
     }
 
-    if (validEvents.length === 0) {
-        return { events: [] };
+    if (invalidEvents > 0 || unattributedEvents > 0) {
+        logWarn(
+            `Event extraction discarded ${invalidEvents + unattributedEvents}/${rawEvents.length} events ` +
+                `(${invalidEvents} failed validation, ${unattributedEvents} carried no usable source ids); ` +
+                'their messages fall through to the coverage pass'
+        );
     }
 
     return { events: validEvents };

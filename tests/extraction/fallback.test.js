@@ -299,4 +299,61 @@ describe('coverage fallback extraction', () => {
         expect(fallback.summary.endsWith('.')).toBe(true);
         expect(fallback.temporal_anchor).toBeNull();
     });
+
+    it('logs events discarded for source ids outside the batch', async () => {
+        const data = {
+            schema_version: 5,
+            memories: [],
+            character_states: {},
+            processed_message_ids: [],
+            graph: { nodes: {}, edges: {} },
+            communities: {},
+            reflection_state: {},
+            graph_message_count: 0,
+            lifecycle: { status: 'ready' },
+        };
+        const context = {
+            chat: [{ mes: 'A source requiring archival coverage.', is_user: true, name: 'User', send_date: '5' }],
+            name1: 'User',
+            name2: 'Bot',
+            chatId: 'discard-log-chat',
+            chatMetadata: { openvault: data },
+        };
+        const sendRequest = vi
+            .fn()
+            .mockResolvedValueOnce({
+                content: JSON.stringify({
+                    events: [
+                        {
+                            summary: 'An event that names a source id outside the batch.',
+                            importance: 3,
+                            characters_involved: [],
+                            witnesses: [],
+                            source_message_ids: [99],
+                        },
+                    ],
+                }),
+            })
+            .mockResolvedValueOnce({ content: JSON.stringify({ entities: [], relationships: [] }) })
+            .mockResolvedValueOnce({
+                content: JSON.stringify({
+                    fallbacks: [{ source_message_id: 0, summary: 'Coverage record.', temporal_anchor: null }],
+                }),
+            });
+        const warn = vi.fn();
+        setupTestContext({
+            context,
+            settings: { ...defaultSettings, extractionProfile: 'test-profile', backfillMaxRPM: 99999 },
+            deps: {
+                connectionManager: { selectedProfile: 'test-profile', profiles: [], sendRequest },
+                console: { log: vi.fn(), warn, error: vi.fn() },
+                saveChatConditional: vi.fn(async () => true),
+            },
+        });
+
+        await extractMemories([0], 'discard-log-chat');
+
+        const warnings = warn.mock.calls.map((call) => String(call[0])).join('\n');
+        expect(warnings).toContain('unknown, duplicate, or empty source ids');
+    });
 });
