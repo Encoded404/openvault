@@ -356,4 +356,67 @@ describe('coverage fallback extraction', () => {
         const warnings = warn.mock.calls.map((call) => String(call[0])).join('\n');
         expect(warnings).toContain('unknown, duplicate, or empty source ids');
     });
+
+    it('falls back to deterministic coverage records once repeated attempts fail', async () => {
+        const data = {
+            schema_version: 5,
+            memories: [],
+            character_states: {},
+            processed_message_ids: [],
+            graph: { nodes: {}, edges: {} },
+            communities: {},
+            reflection_state: {},
+            graph_message_count: 0,
+            lifecycle: { status: 'ready' },
+        };
+        const context = {
+            chat: [
+                { mes: 'A source requiring repeated coverage attempts.', is_user: true, name: 'User', send_date: '6' },
+            ],
+            name1: 'User',
+            name2: 'Bot',
+            chatId: 'degrade-chat',
+            chatMetadata: { openvault: data },
+        };
+        const emptyEvents = { content: JSON.stringify({ events: [] }) };
+        const emptyGraph = { content: JSON.stringify({ entities: [], relationships: [] }) };
+        const invalidFallback = { content: JSON.stringify({ fallbacks: [] }) };
+        const sendRequest = vi
+            .fn()
+            .mockResolvedValueOnce(emptyEvents)
+            .mockResolvedValueOnce(emptyGraph)
+            .mockResolvedValueOnce(invalidFallback)
+            .mockResolvedValueOnce(invalidFallback)
+            .mockResolvedValueOnce(emptyEvents)
+            .mockResolvedValueOnce(emptyGraph)
+            .mockResolvedValueOnce(invalidFallback)
+            .mockResolvedValueOnce(invalidFallback);
+        const saveChatConditional = vi.fn(async () => true);
+        setupTestContext({
+            context,
+            settings: { ...defaultSettings, extractionProfile: 'test-profile', backfillMaxRPM: 99999 },
+            deps: {
+                connectionManager: { selectedProfile: 'test-profile', profiles: [], sendRequest },
+                console: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+                saveChatConditional,
+            },
+        });
+
+        // First pass fails the contract and leaves the batch uncommitted so the
+        // worker can retry it.
+        await expect(extractMemories([0], 'degrade-chat')).rejects.toThrow('Fallback response omitted');
+        expect(data.processed_message_ids).toEqual([]);
+        expect(data.memories).toEqual([]);
+
+        // Second failure degrades instead of looping forever.
+        const result = await extractMemories([0], 'degrade-chat');
+        expect(result.events_created).toBe(1);
+
+        const coverage = data.memories.find((memory) => memory.coverage_fallback);
+        expect(coverage.importance).toBe(1);
+        expect(coverage.summary).toBe('Conversation context was unavailable for this source message.');
+        expect(coverage.message_ids).toEqual([0]);
+        expect(data.processed_message_ids).toHaveLength(1);
+        expect(saveChatConditional).toHaveBeenCalled();
+    });
 });

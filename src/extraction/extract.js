@@ -125,6 +125,21 @@ const _emptyExtractionAttempts = new Map();
 
 const MAX_EMPTY_RETRIES = 2;
 
+/**
+ * Tracks coverage passes that failed validation, keyed by a hash of the
+ * batch's message fingerprints. A provider that cannot satisfy the fallback
+ * source-id contract would otherwise leave its batch uncommitted forever,
+ * because `markMessagesProcessed` only runs after a clean commit and the
+ * worker keeps re-selecting the same messages.
+ * @type {Map<string, number>}
+ */
+const _fallbackFailureAttempts = new Map();
+
+const MAX_FALLBACK_FAILURES = 2;
+
+/** Deterministic coverage summary for sources the LLM pass could not cover. */
+const DEFAULT_COVERAGE_SUMMARY = 'Conversation context was unavailable for this source message.';
+
 /** Return Unicode word segments, using locale-aware segmentation when present. */
 function getUnicodeWordSegments(value) {
     const text = String(value ?? '').trim();
@@ -175,10 +190,48 @@ function escapeExtractionXml(value) {
 }
 
 /**
+ * Build one archival coverage record for a single source message.
+ *
+ * @param {Object} message - Source message
+ * @param {number} index - Position within the coverage batch
+ * @param {string} summary - Validated one-sentence summary
+ * @param {string|null} temporalAnchor - Story-time anchor, when one is known
+ * @param {string} batchId - Batch identifier
+ * @returns {Object} Coverage memory
+ */
+function buildCoverageRecord(message, index, summary, temporalAnchor, batchId) {
+    return {
+        id: `fallback_${Date.now()}_${index}`,
+        type: 'event',
+        summary,
+        importance: 1,
+        temporal_anchor: temporalAnchor,
+        is_transient: false,
+        characters_involved: [],
+        witnesses: [],
+        location: null,
+        is_secret: false,
+        emotional_impact: {},
+        relationship_impact: {},
+        tokens: tokenize(summary),
+        message_ids: [message.id],
+        message_fingerprints: [getMessageRevision(message)],
+        sequence: message.id * 1000 + index,
+        created_at: Date.now(),
+        batch_id: batchId,
+        coverage_fallback: true,
+    };
+}
+
+/**
  * One batched LLM pass for uncovered sources. The full ordered batch remains
  * available as temporal context, while only required messages receive
  * fallbacks. A single constrained retry is allowed; output is then normalized
  * deterministically and validated against the requested source ids.
+ *
+ * A provider that keeps failing this contract cannot be allowed to stall the
+ * batch forever, so after MAX_FALLBACK_FAILURES failed passes the sources fall
+ * back to a deterministic coverage record and the batch commits.
  */
 async function fetchFallbackMemories(requiredMessages, contextMessages, contextParams, batchId, abortSignal) {
     if (!requiredMessages.length) return [];
@@ -240,35 +293,30 @@ async function fetchFallbackMemories(requiredMessages, contextMessages, contextP
             if (attempt === 0) logDebug(`Fallback extraction validation failed; retrying once: ${error.message}`);
         }
     }
-    if (!validated || !parsed) throw lastError || new Error('Fallback extraction failed');
+    const batchKey = _getBatchKey(contextMessages);
+    if (!validated || !parsed) {
+        const failures = (_fallbackFailureAttempts.get(batchKey) || 0) + 1;
+        _fallbackFailureAttempts.set(batchKey, failures);
+
+        if (failures < MAX_FALLBACK_FAILURES) throw lastError || new Error('Fallback extraction failed');
+
+        logWarn(
+            `Coverage fallback failed ${failures} times for this batch; falling back to deterministic ` +
+                'coverage records so the batch can commit'
+        );
+        _fallbackFailureAttempts.delete(batchKey);
+        return requiredMessages.map((message, index) =>
+            buildCoverageRecord(message, index, DEFAULT_COVERAGE_SUMMARY, null, batchId)
+        );
+    }
+    _fallbackFailureAttempts.delete(batchKey);
 
     const byId = new Map(requiredMessages.map((message) => [message.id, message]));
     return parsed.fallbacks.map((raw, index) => {
         const message = byId.get(raw.source_message_id);
-        const fingerprint = getMessageRevision(message);
         const summary = normalizeFallbackSummary(raw.summary, message.mes);
         if (!validateFallbackSummary(summary)) throw new Error('Fallback summary failed normalized constraints');
-        return {
-            id: `fallback_${Date.now()}_${index}`,
-            type: 'event',
-            summary,
-            importance: 1,
-            temporal_anchor: raw.temporal_anchor,
-            is_transient: false,
-            characters_involved: [],
-            witnesses: [],
-            location: null,
-            is_secret: false,
-            emotional_impact: {},
-            relationship_impact: {},
-            tokens: tokenize(summary),
-            message_ids: [message.id],
-            message_fingerprints: [fingerprint],
-            sequence: message.id * 1000 + index,
-            created_at: Date.now(),
-            batch_id: batchId,
-            coverage_fallback: true,
-        };
+        return buildCoverageRecord(message, index, summary, raw.temporal_anchor, batchId);
     });
 }
 
